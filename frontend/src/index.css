@@ -1,0 +1,258 @@
+/* frontend/src/index.css */
+
+/* ========== Charte : variables ========== */
+:root {
+  --color-bg: #f7f8fa;
+  --color-card: #ffffff;
+  --color-text: #111827;
+  --color-text-muted: #4b5563;
+  --color-accent: #1f5fbf;
+  --color-accent-dark: #174a96;
+  --color-accent-light: #e3f0fd;
+  --color-favorite: #d92d4f;
+  --color-border: #e5e7eb;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* ========== Catalogue : carte d'un livre ========== */
+.book-card {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+
+.book-card:hover {
+  box-shadow: 0 4px 14px rgba(17, 24, 39, 0.12);
+}
+
+/* Toutes les couvertures ont la même proportion (2/3), quelle que soit l'image */
+.book-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover; /* remplace "cover" par "contain" pour ne rien couper */
+  background-color: var(--color-accent-light);
+}
+
+/* ========== Fiche d'un livre ========== */
+.book-detail-cover-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+}
+
+.book-detail-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover; /* remplace "cover" par "contain" pour ne rien couper */
+  border-radius: 12px;
+  background-color: var(--color-accent-light);
+  box-shadow: 0 2px 10px rgba(17, 24, 39, 0.15);
+}
+
+/* ========== Catégorie (pastille) ========== */
+.book-category {
+  display: inline-block;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  background-color: var(--color-accent-light);
+  color: var(--color-accent-dark);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* ========== Bouton cœur (favoris) ========== */
+.favorite-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 2; /* au-dessus du lien cliquable de la carte (stretched-link) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.95);
+  color: var(--color-text-muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.favorite-btn:hover,
+.favorite-btn.is-active {
+  color: var(--color-favorite);
+}
+
+.favorite-btn:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+/* ========== Notes : étoiles et cartes de notes ========== */
+.star-btn {
+  background: none;
+  border: 0;
+  padding: 0 0.1rem;
+  font-size: 1.8rem;
+  line-height: 1;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.star-btn:hover,
+.star-btn.is-on,
+.star-display {
+  color: #b7791f;
+}
+
+.star-display {
+  font-size: 1.2rem;
+  letter-spacing: 0.1rem;
+}
+
+.note-card {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.note-cover {
+  width: 64px;
+  height: 96px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background-color: var(--color-accent-light);
+}
+
+.note-body {
+  min-width: 0;
+}
+
+/* Conserve les retours à la ligne et coupe les très longs mots */
+.note-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ========== Objectif de lecture : barre de progression aux couleurs de la charte ========== */
+.progress {
+  --bs-progress-bg: var(--color-accent-light);
+  --bs-progress-bar-bg: var(--color-accent);
+}
+
+/* ========== Espace personnel : liste de navigation à droite ========== */
+.account-nav {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.account-nav-title {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  background-color: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.account-nav .account-nav-title:first-child {
+  border-top: 0;
+}
+
+.account-nav .list-group-item {
+  color: var(--color-accent);
+}
+
+.account-nav .list-group-item.active {
+  background-color: var(--color-accent-light);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.account-nav .badge {
+  background-color: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
+.account-nav .list-group-item.active .badge {
+  background-color: #fff;
+}
+
+/* La liste suit le défilement sur grand écran */
+@media (min-width: 992px) {
+  .account-sidebar {
+    position: sticky;
+    top: 1rem;
+  }
+}
+
+/* frontend/src/index.css */
+
+/* ========== Statistiques de lecture ========== */
+.stat-tile {
+  height: 100%;
+  padding: 1rem;
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.stat-value {
+  font-size: 1.8rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--color-accent);
+}
+
+.stat-label {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.month-row {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr 2.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.month-label {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.month-track {
+  height: 0.75rem;
+  overflow: hidden;
+  background-color: var(--color-accent-light);
+  border-radius: 999px;
+}
+
+.month-bar {
+  height: 100%;
+  background-color: var(--color-accent);
+  border-radius: 999px;
+}
+
+.month-count {
+  text-align: right;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
