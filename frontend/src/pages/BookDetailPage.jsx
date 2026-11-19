@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import FavoriteButton from "../components/books/FavoriteButton";
 import ReadingStatusSelect from "../components/books/ReadingStatusSelect";
 import BookNoteForm from "../components/books/BookNoteForm";
+import ReadButton from "../components/books/ReadButton";
 import Loader from "../components/common/Loader";
 import ErrorMessage from "../components/common/ErrorMessage";
 import { useBook } from "../hooks/useBook";
@@ -77,6 +78,8 @@ function BookDetailPage() {
 
           <h2 className="h6 mt-4">Résumé</h2>
           <p>{book.description || "Aucune description disponible."}</p>
+
+          <ReadButton book={book} />
 
           <ReadingStatusSelect bookId={book.id} />
           <BookNoteForm bookId={book.id} />

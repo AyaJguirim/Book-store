@@ -19,6 +19,12 @@ import {
   deleteFavorite,
   importLocalFavorites,
 } from '../controllers/favoriteController.js'
+import {
+  listReadingProgress,
+  getReadingProgress,
+  putReadingProgress,
+  deleteReadingProgress,
+} from '../controllers/readingProgressController.js'
 import { listNotes, getNote, putNote, removeNote } from '../controllers/noteController.js'
 import {
   getReadingGoal,
@@ -40,6 +46,11 @@ router.get('/reading-log', listReadingLog)
 router.get('/reading-log/:bookId', getReadingEntry)
 router.put('/reading-log/:bookId', putReadingEntry)
 router.delete('/reading-log/:bookId', removeReadingEntry)
+
+router.get('/reading-progress', listReadingProgress)
+router.get('/reading-progress/:bookId', getReadingProgress)
+router.put('/reading-progress/:bookId', putReadingProgress)
+router.delete('/reading-progress/:bookId', deleteReadingProgress)
 
 router.get('/favorites', listFavorites)
 router.post('/favorites/import', importLocalFavorites)

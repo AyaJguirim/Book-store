@@ -58,6 +58,13 @@ function Navbar() {
                       Mon espace
                     </NavLink>
                   </li>
+                  {user.role === "admin" && (
+                    <li className="nav-item">
+                      <NavLink to="/admin/livres" className={getLinkClass}>
+                        Administration
+                      </NavLink>
+                    </li>
+                  )}
                   <li className="nav-item ms-md-2 mt-2 mt-md-0">
                     <button
                       type="button"

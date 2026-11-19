@@ -256,3 +256,28 @@ body {
   font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* ========== Lecteur PDF ========== */
+.reader-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--bs-body-bg, #fff);
+}
+
+.reader-page-input {
+  width: 5rem;
+}
+
+/* Zone de lecture : défile horizontalement si le zoom dépasse la largeur */
+.reader-stage {
+  overflow-x: auto;
+  text-align: center;
+}
+
+.reader-canvas {
+  display: inline-block;
+  background-color: #fff;
+  box-shadow: 0 2px 10px rgba(17, 24, 39, 0.15);
+  max-width: none;
+}

@@ -1,4 +1,6 @@
-import { getAllBooks, getBookById } from '../services/bookService.js'
+import path from 'node:path'
+import { getAllBooks, getBookById, getBookFiles } from '../services/bookService.js'
+import { PDFS_DIR } from '../config/uploads.js'
 import { HttpError } from '../utils/HttpError.js'
 
 const MAX_SEARCH_LENGTH = 100
@@ -42,4 +44,29 @@ export async function getBook(req, res) {
   }
 
   res.json({ data: book })
+}
+
+// Envoie le fichier PDF (route réservée aux utilisateurs connectés).
+// sendFile gère aussi les requêtes partielles (Range) utilisées par les lecteurs PDF.
+export async function getBookPdf(req, res, next) {
+  const id = parseId(req.params.id, 'id')
+
+  const files = await getBookFiles(id)
+  if (!files) throw new HttpError(404, 'Livre introuvable.')
+  if (!files.pdf_path) throw new HttpError(404, 'Ce livre n\'a pas de fichier PDF.')
+
+  res.sendFile(
+    path.join(PDFS_DIR, path.basename(files.pdf_path)),
+    {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'inline',
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, no-cache',
+      },
+    },
+    (error) => {
+      if (error && !res.headersSent) next(new HttpError(404, 'Fichier PDF introuvable.'))
+    },
+  )
 }

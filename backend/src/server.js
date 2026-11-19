@@ -8,6 +8,8 @@ import { notFound } from './middlewares/notFound.js'
 import { errorHandler } from './middlewares/errorHandler.js'
 import authRoutes from './routes/authRoutes.js'
 import meRoutes from './routes/meRoutes.js'
+import adminRoutes from './routes/adminRoutes.js'
+import { COVERS_DIR } from './config/uploads.js'
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -31,6 +33,17 @@ app.use('/api/books', bookRoutes)
 app.use('/api/categories', categoryRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/me', meRoutes)
+app.use('/api/admin', adminRoutes)
+// Couvertures : images publiques (noms aléatoires, donc cache long possible).
+// Les PDF, eux, ne sont jamais servis ici : uniquement via /api/books/:id/pdf, après connexion.
+app.use(
+  '/uploads/covers',
+  express.static(COVERS_DIR, {
+    index: false,
+    maxAge: '7d',
+    setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),
+  }),
+)
 // Toujours en DERNIER, dans cet ordre
 app.use(notFound)
 app.use(errorHandler)

@@ -16,7 +16,7 @@ export async function recordView(userId, bookId) {
 export async function getRecentViews(userId, limit) {
   const result = await pool.query(
     `SELECT b.id, b.title, b.author, b.category_id, c.name AS category,
-            b.cover_url, b.publication_year, rv.viewed_at
+            b.cover_url, b.cover_path, b.publication_year, rv.viewed_at
      FROM recent_views rv
      JOIN books b ON b.id = rv.book_id
      JOIN categories c ON c.id = b.category_id

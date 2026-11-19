@@ -20,7 +20,7 @@ function signToken(user) {
 
 // Seules ces informations sortent de l'API (jamais le hash)
 function publicUser(user) {
-  return { id: user.id, name: user.name, email: user.email }
+  return { id: user.id, name: user.name, email: user.email, role: user.role }
 }
 
 function validateRegistration(body) {

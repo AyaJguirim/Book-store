@@ -4,6 +4,7 @@
 
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
+DROP TABLE IF EXISTS reading_progress;
 DROP TABLE IF EXISTS recent_views;
 DROP TABLE IF EXISTS notes;
 DROP TABLE IF EXISTS reading_log;
@@ -25,6 +26,8 @@ CREATE TABLE books (
   category_id      INTEGER NOT NULL REFERENCES categories(id),
   description      TEXT,
   cover_url        VARCHAR(500),
+  pdf_path         VARCHAR(255),
+  cover_path       VARCHAR(255),
   publication_year INTEGER CHECK (publication_year BETWEEN 1 AND 2100),
   created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
   CHECK (btrim(title) <> ''),

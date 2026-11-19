@@ -18,6 +18,7 @@ import { READING_STATUSES } from "../utils/readingStatuses";
 // frontend/src/pages/AccountPage.jsx
 import ReadingStatsCard from "../components/account/ReadingStatsCard";
 import FavoriteBooksSection from "../components/account/FavoriteBooksSection";
+import ReadingHistorySection from "../components/account/ReadingHistorySection";
 function AccountPage() {
   const { user } = useAuth();
   const { count: favoritesCount } = useFavorites();
@@ -210,6 +211,7 @@ function AccountPage() {
 
             {notesContent}
           </section>
+          <ReadingHistorySection />
           <FavoriteBooksSection />
           <section id="recent" className="mb-5" aria-labelledby="recent-title">
             <div className="d-flex justify-content-between align-items-baseline mb-3">

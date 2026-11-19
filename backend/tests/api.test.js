@@ -958,3 +958,208 @@ test("Supprimer l'objectif est idempotent", async () => {
   const goal = await getGoal(token, 2026)
   assert.equal(goal.body.data.target, null)
 })
+
+// ===================== Livres PDF : administration, lecture, progression =====================
+
+// Un PDF minimal (une page vide) : suffit pour tester l'envoi
+const MINI_PDF = Buffer.from(
+  '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF',
+)
+
+// Compte administrateur : on promeut directement dans la base (comme le ferait le propriétaire du site)
+async function registerAdmin() {
+  const { account, body } = await registerAccount()
+  await pool.query("UPDATE users SET role = 'admin' WHERE id = $1", [body.data.user.id])
+  return { account, token: body.data.token }
+}
+
+// Formulaire multipart pour créer un livre (pdf facultatif)
+function bookForm({ withPdf = true, title = 'Livre de test PDF' } = {}) {
+  const form = new FormData()
+  form.append('title', title)
+  form.append('author', 'Auteur Test')
+  form.append('category_id', '1')
+  if (withPdf) form.append('pdf', new Blob([MINI_PDF], { type: 'application/pdf' }), 'livre.pdf')
+  return form
+}
+
+async function createTestBook(adminToken, options) {
+  const response = await fetch(`${BASE_URL}/api/admin/books`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${adminToken}` },
+    body: bookForm(options),
+  })
+  return { status: response.status, body: await response.json() }
+}
+
+test('Le rôle est "user" par défaut et visible dans /api/auth/me', async () => {
+  const { body } = await registerAccount()
+  assert.equal(body.data.user.role, 'user')
+
+  const me = await request('/api/auth/me', bearer(body.data.token))
+  assert.equal(me.body.data.user.role, 'user')
+})
+
+test('Les routes /api/admin exigent une connexion (401) puis le rôle admin (403)', async () => {
+  const calls = [
+    ['/api/admin/books', { method: 'POST' }],
+    ['/api/admin/books/1', { method: 'PUT' }],
+    ['/api/admin/books/1', { method: 'DELETE' }],
+  ]
+  const userToken = (await registerAccount()).body.data.token
+
+  for (const [path, options] of calls) {
+    const anonymous = await request(path, options)
+    assert.equal(anonymous.status, 401, `${options.method} ${path} sans jeton`)
+
+    const asUser = await request(path, bearer(userToken, options))
+    assert.equal(asUser.status, 403, `${options.method} ${path} avec un compte normal`)
+  }
+})
+
+test("L'administrateur crée, modifie puis supprime un livre avec son PDF", async () => {
+  const { token } = await registerAdmin()
+
+  const created = await createTestBook(token)
+  assert.equal(created.status, 201)
+  assert.equal(created.body.data.has_pdf, true)
+  assert.equal('pdf_path' in created.body.data, false, 'le nom du fichier PDF ne doit pas fuiter')
+  const id = created.body.data.id
+
+  const form = new FormData()
+  form.append('title', 'Titre modifié')
+  const updated = await fetch(`${BASE_URL}/api/admin/books/${id}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  })
+  const updatedBody = await updated.json()
+  assert.equal(updated.status, 200)
+  assert.equal(updatedBody.data.title, 'Titre modifié')
+  assert.equal(updatedBody.data.has_pdf, true, 'le PDF est conservé si on ne le remplace pas')
+
+  const deleted = await request(`/api/admin/books/${id}`, bearer(token, { method: 'DELETE' }))
+  assert.equal(deleted.status, 200)
+
+  const gone = await request(`/api/books/${id}`)
+  assert.equal(gone.status, 404)
+})
+
+test('Création : un faux PDF, un titre vide ou une catégorie inconnue sont refusés (400)', async () => {
+  const { token } = await registerAdmin()
+
+  const fakePdf = bookForm({ withPdf: false })
+  fakePdf.append('pdf', new Blob(['ceci n\'est pas un PDF'], { type: 'application/pdf' }), 'faux.pdf')
+  const badFile = await fetch(`${BASE_URL}/api/admin/books`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: fakePdf,
+  })
+  assert.equal(badFile.status, 400)
+
+  const noTitle = new FormData()
+  noTitle.append('author', 'A')
+  noTitle.append('category_id', '1')
+  const missingTitle = await fetch(`${BASE_URL}/api/admin/books`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: noTitle,
+  })
+  assert.equal(missingTitle.status, 400)
+
+  const badCategory = bookForm({ withPdf: false })
+  badCategory.set('category_id', '999999')
+  const unknownCategory = await fetch(`${BASE_URL}/api/admin/books`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: badCategory,
+  })
+  assert.equal(unknownCategory.status, 400)
+})
+
+test('Le PDF d\'un livre exige une connexion et se télécharge intact', async () => {
+  const { token: adminToken } = await registerAdmin()
+  const { body: created } = await createTestBook(adminToken)
+  const id = created.data.id
+
+  try {
+    const anonymous = await request(`/api/books/${id}/pdf`)
+    assert.equal(anonymous.status, 401)
+
+    const userToken = (await registerAccount()).body.data.token
+    const response = await fetch(`${BASE_URL}/api/books/${id}/pdf`, bearer(userToken))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'application/pdf')
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), MINI_PDF)
+  } finally {
+    await request(`/api/admin/books/${id}`, bearer(adminToken, { method: 'DELETE' }))
+  }
+})
+
+test('Un livre sans PDF : 404 sur /pdf et has_pdf = false', async () => {
+  const { token: adminToken } = await registerAdmin()
+  const { body: created } = await createTestBook(adminToken, { withPdf: false })
+  const id = created.data.id
+
+  try {
+    assert.equal(created.data.has_pdf, false)
+    const userToken = (await registerAccount()).body.data.token
+    const { status } = await request(`/api/books/${id}/pdf`, bearer(userToken))
+    assert.equal(status, 404)
+  } finally {
+    await request(`/api/admin/books/${id}`, bearer(adminToken, { method: 'DELETE' }))
+  }
+})
+
+test('Les routes /api/me/reading-progress exigent une connexion : 401', async () => {
+  const calls = [
+    ['/api/me/reading-progress', undefined],
+    ['/api/me/reading-progress/1', undefined],
+    ['/api/me/reading-progress/1', { method: 'PUT' }],
+    ['/api/me/reading-progress/1', { method: 'DELETE' }],
+  ]
+  for (const [path, options] of calls) {
+    const { status } = await request(path, options)
+    assert.equal(status, 401, `${path} sans jeton devrait renvoyer 401`)
+  }
+})
+
+test('La dernière page lue est mémorisée, mise à jour sans doublon et privée', async () => {
+  const tokenA = (await registerAccount()).body.data.token
+  const tokenB = (await registerAccount()).body.data.token
+  const [id] = await firstBookIds(1)
+  const path = `/api/me/reading-progress/${id}`
+
+  // Jamais ouvert : pas de progression
+  assert.equal((await request(path, bearer(tokenA))).body.data, null)
+
+  assert.equal((await request(path, bearer(tokenA, jsonRequest('PUT', { page: 5, totalPages: 20 })))).status, 200)
+  // Le nombre total de pages est conservé si on ne le renvoie pas
+  await request(path, bearer(tokenA, jsonRequest('PUT', { page: 8 })))
+
+  const progress = (await request(path, bearer(tokenA))).body.data
+  assert.equal(progress.last_page, 8)
+  assert.equal(progress.total_pages, 20)
+
+  const history = (await request('/api/me/reading-progress', bearer(tokenA))).body.data
+  assert.equal(history.length, 1)
+  assert.equal(history[0].id, id)
+  assert.equal(history[0].last_page, 8)
+
+  // Rien chez l'autre compte
+  assert.equal((await request(path, bearer(tokenB))).body.data, null)
+  assert.deepEqual((await request('/api/me/reading-progress', bearer(tokenB))).body.data, [])
+})
+
+test('Progression : page invalide 400, livre inexistant 404', async () => {
+  const token = (await registerAccount()).body.data.token
+  const [id] = await firstBookIds(1)
+
+  for (const payload of [{ page: 0 }, { page: -1 }, { page: '3' }, { page: 1.5 }, {}, { page: 9, totalPages: 5 }]) {
+    const { status } = await request(`/api/me/reading-progress/${id}`, bearer(token, jsonRequest('PUT', payload)))
+    assert.equal(status, 400, `${JSON.stringify(payload)} devrait renvoyer 400`)
+  }
+
+  const missing = await request('/api/me/reading-progress/999999', bearer(token, jsonRequest('PUT', { page: 1 })))
+  assert.equal(missing.status, 404)
+})

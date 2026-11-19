@@ -5,7 +5,7 @@ import { pool } from '../config/database.js'
 export async function getReadingLog(userId, status) {
   const result = await pool.query(
     `SELECT b.id, b.title, b.author, b.category_id, c.name AS category,
-            b.cover_url, b.publication_year,
+            b.cover_url, b.cover_path, b.publication_year,
             rl.status,
             to_char(rl.started_at, 'YYYY-MM-DD') AS started_at,
             to_char(rl.finished_at, 'YYYY-MM-DD') AS finished_at,

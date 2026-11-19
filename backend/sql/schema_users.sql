@@ -2,6 +2,7 @@
 -- A executer APRES schema.sql (la table books doit exister).
 -- Re-executable : supprime et recree uniquement ces tables.
 
+DROP TABLE IF EXISTS reading_progress;
 DROP TABLE IF EXISTS recent_views;
 DROP TABLE IF EXISTS notes;
 DROP TABLE IF EXISTS reading_log;
@@ -14,6 +15,7 @@ CREATE TABLE users (
   name          VARCHAR(100) NOT NULL CHECK (btrim(name) <> ''),
   email         VARCHAR(254) NOT NULL CHECK (btrim(email) <> ''),
   password_hash VARCHAR(100) NOT NULL,
+  role          VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   created_at    TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -67,3 +69,15 @@ CREATE TABLE recent_views (
 );
 
 CREATE INDEX idx_recent_views_user_date ON recent_views(user_id, viewed_at DESC);
+
+-- Progression de lecture : derniere page consultee + historique de lecture
+CREATE TABLE reading_progress (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  book_id     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  last_page   INTEGER NOT NULL CHECK (last_page >= 1),
+  total_pages INTEGER CHECK (total_pages >= 1),
+  updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, book_id)
+);
+
+CREATE INDEX idx_reading_progress_user_date ON reading_progress(user_id, updated_at DESC);

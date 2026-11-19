@@ -104,6 +104,13 @@ function AccountSidebar({
           <button
             type="button"
             className={ITEM_CLASS}
+            onClick={() => scrollToSection("reading-history")}
+          >
+            Historique de lecture
+          </button>
+          <button
+            type="button"
+            className={ITEM_CLASS}
             onClick={() => scrollToSection("favorites")}
           >
             Mes livres favoris
