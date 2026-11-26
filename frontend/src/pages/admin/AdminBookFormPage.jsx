@@ -7,27 +7,44 @@ import ErrorMessage from "../../components/common/ErrorMessage";
 import { useBook } from "../../hooks/useBook";
 import { useCategories } from "../../hooks/useCategories";
 import { createBook, updateBook } from "../../services/adminBookService";
+import { createCategory } from "../../services/categoryService";
 import { getCoverUrl } from "../../utils/getCoverUrl";
 import { getErrorMessage } from "../../utils/getErrorMessage";
 
 const MAX_PDF_MB = 100;
 const MAX_COVER_MB = 5;
 const COVER_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const NEW_CATEGORY = "__new__"; // valeur de l'option « + Ajouter une catégorie… »
 
 // Le formulaire lui-même : `book` vaut null pour un ajout, l'objet livre pour une modification
 function BookForm({ book }) {
   const navigate = useNavigate();
-  const { categories, loading: categoriesLoading, error: categoriesError } = useCategories();
+  const {
+    categories,
+    loading: categoriesLoading,
+    error: categoriesError,
+    addCategory,
+  } = useCategories();
   const isEdit = book !== null;
 
   const [title, setTitle] = useState(book?.title ?? "");
   const [author, setAuthor] = useState(book?.author ?? "");
-  const [categoryId, setCategoryId] = useState(book ? String(book.category_id) : "");
-  const [year, setYear] = useState(book?.publication_year ? String(book.publication_year) : "");
+  const [categoryId, setCategoryId] = useState(
+    book ? String(book.category_id) : "",
+  );
+  const [year, setYear] = useState(
+    book?.publication_year ? String(book.publication_year) : "",
+  );
   const [description, setDescription] = useState(book?.description ?? "");
   const [pdfFile, setPdfFile] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
   const [removeCover, setRemoveCover] = useState(false);
+
+  // Ajout d'une nouvelle catégorie depuis la liste déroulante
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryError, setCategoryError] = useState(null);
+  const [categorySaving, setCategorySaving] = useState(false);
 
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -76,6 +93,39 @@ function BookForm({ book }) {
     if (file) setRemoveCover(false);
   };
 
+  const handleCategoryChange = (event) => {
+    const value = event.target.value;
+    setCategoryError(null);
+    if (value === NEW_CATEGORY) {
+      setCreatingCategory(true); // on garde l'ancienne catégorie choisie jusqu'à la création
+    } else {
+      setCreatingCategory(false);
+      setCategoryId(value);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    if (name === "") {
+      setCategoryError("Saisissez le nom de la catégorie.");
+      return;
+    }
+
+    setCategorySaving(true);
+    setCategoryError(null);
+    try {
+      const created = await createCategory(name);
+      addCategory(created); // apparaît tout de suite dans la liste
+      setCategoryId(String(created.id)); // et devient la catégorie du livre
+      setNewCategoryName("");
+      setCreatingCategory(false);
+    } catch (err) {
+      setCategoryError(getErrorMessage(err));
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError(null);
@@ -99,7 +149,8 @@ function BookForm({ book }) {
     setSubmitting(true);
     setUploadPercent(0);
     try {
-      if (isEdit) await updateBook(book.id, formData, { onProgress: setUploadPercent });
+      if (isEdit)
+        await updateBook(book.id, formData, { onProgress: setUploadPercent });
       else await createBook(formData, { onProgress: setUploadPercent });
       navigate("/admin/livres");
     } catch (err) {
@@ -111,14 +162,17 @@ function BookForm({ book }) {
   if (categoriesLoading) return <Loader label="Chargement du formulaire…" />;
   if (categoriesError) return <ErrorMessage message={categoriesError} />;
 
-  const currentCover = coverPreview ?? (!removeCover && isEdit ? getCoverUrl(book) : null);
+  const currentCover =
+    coverPreview ?? (!removeCover && isEdit ? getCoverUrl(book) : null);
 
   return (
     <div>
       <Link to="/admin/livres" className="btn btn-link px-0 mb-3">
         ← Retour à la gestion des livres
       </Link>
-      <h1 className="h3 mb-4">{isEdit ? `Modifier « ${book.title} »` : "Ajouter un livre"}</h1>
+      <h1 className="h3 mb-4">
+        {isEdit ? `Modifier « ${book.title} »` : "Ajouter un livre"}
+      </h1>
 
       <form onSubmit={handleSubmit} className="row g-3" noValidate>
         {error && (
@@ -164,8 +218,8 @@ function BookForm({ book }) {
           <select
             id="book-category"
             className="form-select"
-            value={categoryId}
-            onChange={(event) => setCategoryId(event.target.value)}
+            value={creatingCategory ? NEW_CATEGORY : categoryId}
+            onChange={handleCategoryChange}
             required
           >
             <option value="">Choisir…</option>
@@ -174,7 +228,56 @@ function BookForm({ book }) {
                 {category.name}
               </option>
             ))}
+            <option value={NEW_CATEGORY}>+ Ajouter une catégorie…</option>
           </select>
+
+          {creatingCategory && (
+            <div className="mt-2 p-2 border rounded bg-white">
+              <label htmlFor="new-category" className="form-label small mb-1">
+                Nom de la nouvelle catégorie
+              </label>
+              <div className="d-flex gap-2">
+                <input
+                  id="new-category"
+                  className="form-control form-control-sm"
+                  value={newCategoryName}
+                  maxLength={100}
+                  autoFocus
+                  onChange={(event) => setNewCategoryName(event.target.value)}
+                  onKeyDown={(event) => {
+                    // Entrée ajoute la catégorie, sans envoyer tout le formulaire
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleAddCategory();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm text-nowrap"
+                  onClick={handleAddCategory}
+                  disabled={categorySaving}
+                >
+                  {categorySaving ? "Ajout…" : "Ajouter"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  onClick={() => {
+                    setCreatingCategory(false);
+                    setCategoryError(null);
+                  }}
+                >
+                  Annuler
+                </button>
+              </div>
+              {categoryError && (
+                <div className="text-danger small mt-1" role="alert">
+                  {categoryError}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="col-12 col-md-6">
@@ -267,8 +370,18 @@ function BookForm({ book }) {
 
         {submitting && (pdfFile || coverFile) && (
           <div className="col-12">
-            <div className="progress" role="progressbar" aria-label="Envoi des fichiers" aria-valuenow={uploadPercent} aria-valuemin="0" aria-valuemax="100">
-              <div className="progress-bar" style={{ width: `${uploadPercent}%` }}>
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label="Envoi des fichiers"
+              aria-valuenow={uploadPercent}
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <div
+                className="progress-bar"
+                style={{ width: `${uploadPercent}%` }}
+              >
                 {uploadPercent} %
               </div>
             </div>
@@ -276,8 +389,16 @@ function BookForm({ book }) {
         )}
 
         <div className="col-12 d-flex gap-2">
-          <button type="submit" className="btn btn-primary" disabled={submitting}>
-            {submitting ? "Enregistrement…" : isEdit ? "Enregistrer les modifications" : "Ajouter le livre"}
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={submitting}
+          >
+            {submitting
+              ? "Enregistrement…"
+              : isEdit
+                ? "Enregistrer les modifications"
+                : "Ajouter le livre"}
           </button>
           <Link to="/admin/livres" className="btn btn-outline-secondary">
             Annuler
@@ -297,7 +418,10 @@ function EditBook({ id }) {
     const canRetry = !error.status || error.status >= 500;
     return (
       <div>
-        <ErrorMessage message={error.message} onRetry={canRetry ? reload : undefined} />
+        <ErrorMessage
+          message={error.message}
+          onRetry={canRetry ? reload : undefined}
+        />
         <div className="text-center">
           <Link to="/admin/livres" className="btn btn-outline-primary">
             Retour à la gestion des livres

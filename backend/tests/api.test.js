@@ -1163,3 +1163,188 @@ test('Progression : page invalide 400, livre inexistant 404', async () => {
   const missing = await request('/api/me/reading-progress/999999', bearer(token, jsonRequest('PUT', { page: 1 })))
   assert.equal(missing.status, 404)
 })
+
+
+// ===================== Catégories : ajout par l'administrateur =====================
+
+test('POST /api/admin/categories exige une connexion (401) puis le rôle admin (403)', async () => {
+  const anonymous = await request('/api/admin/categories', jsonRequest('POST', { name: 'Test' }))
+  assert.equal(anonymous.status, 401)
+
+  const userToken = (await registerAccount()).body.data.token
+  const asUser = await request('/api/admin/categories', bearer(userToken, jsonRequest('POST', { name: 'Test' })))
+  assert.equal(asUser.status, 403)
+})
+
+test("L'administrateur ajoute une catégorie : espaces nettoyés, doublon refusé, nom vide refusé", async () => {
+  const { token } = await registerAdmin()
+  const name = `Catégorie test ${Date.now()}`
+
+  try {
+    const created = await request('/api/admin/categories', bearer(token, jsonRequest('POST', { name: `  ${name}  ` })))
+    assert.equal(created.status, 201)
+    assert.equal(created.body.data.name, name)
+
+    // Elle apparaît dans la liste publique
+    const list = await request('/api/categories')
+    assert.ok(list.body.data.some((category) => category.id === created.body.data.id))
+
+    // Même nom, même en majuscules : refusé (409)
+    const duplicate = await request('/api/admin/categories', bearer(token, jsonRequest('POST', { name: name.toUpperCase() })))
+    assert.equal(duplicate.status, 409)
+
+    // Nom vide, absent, trop long ou pas du texte : refusé (400)
+    for (const payload of [{ name: '   ' }, {}, { name: 'x'.repeat(101) }, { name: 42 }]) {
+      const invalid = await request('/api/admin/categories', bearer(token, jsonRequest('POST', payload)))
+      assert.equal(invalid.status, 400, `${JSON.stringify(payload).slice(0, 40)} devrait renvoyer 400`)
+    }
+  } finally {
+    await pool.query('DELETE FROM categories WHERE lower(name) = lower($1)', [name])
+  }
+})
+
+
+// ===================== Auteurs =====================
+
+// Un PNG de 1 pixel : suffit pour tester l'envoi d'une photo
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+// Formulaire d'auteur (la photo est facultative)
+function authorForm(fields = {}, { withPhoto = false } = {}) {
+  const form = new FormData()
+  for (const [key, value] of Object.entries({ name: 'Auteur Fiche Test', ...fields })) {
+    form.append(key, value)
+  }
+  if (withPhoto) form.append('photo', new Blob([TINY_PNG], { type: 'image/png' }), 'photo.png')
+  return form
+}
+
+async function sendAuthor(token, method, path, form) {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  })
+  return { status: response.status, body: await response.json() }
+}
+
+test('GET /api/authors renvoie une liste ; id invalide 400, inconnu 404', async () => {
+  const { status, body } = await request('/api/authors')
+  assert.equal(status, 200)
+  assert.ok(Array.isArray(body.data))
+  for (const author of body.data) {
+    assert.ok(author.id && author.name)
+    assert.equal(typeof author.books_count, 'number')
+  }
+
+  assert.equal((await request('/api/authors/abc')).status, 400)
+  assert.equal((await request('/api/authors/999999')).status, 404)
+})
+
+test('Les routes /api/admin/authors exigent une connexion (401) puis le rôle admin (403)', async () => {
+  const calls = [
+    ['/api/admin/authors', 'POST'],
+    ['/api/admin/authors/1', 'PUT'],
+    ['/api/admin/authors/1', 'DELETE'],
+  ]
+  const userToken = (await registerAccount()).body.data.token
+
+  for (const [path, method] of calls) {
+    assert.equal((await request(path, { method })).status, 401, `${method} ${path} sans jeton`)
+    assert.equal((await request(path, bearer(userToken, { method }))).status, 403, `${method} ${path} compte normal`)
+  }
+})
+
+test("Cycle complet d'un auteur : création, livres retrouvés par le nom, modification, suppression", async () => {
+  const { token } = await registerAdmin()
+  const name = `Zoé Fiche ${Date.now()}`
+  let authorId = null
+  let bookId = null
+
+  try {
+    // Création avec photo, dates et infos personnelles
+    const created = await sendAuthor(
+      token,
+      'POST',
+      '/api/admin/authors',
+      authorForm(
+        { name: `  ${name}  `, biography: 'Une vie.\nDeux lignes.', birth_date: '1913-11-07', death_date: '1960-01-04', birth_place: 'Mondovi', nationality: 'Française' },
+        { withPhoto: true },
+      ),
+    )
+    assert.equal(created.status, 201)
+    authorId = created.body.data.id
+    assert.equal(created.body.data.name, name, 'espaces superflus retirés')
+    assert.equal(created.body.data.birth_date, '1913-11-07', 'la date reste un texte AAAA-MM-JJ')
+    assert.equal(created.body.data.biography, 'Une vie.\nDeux lignes.')
+    assert.ok(created.body.data.photo_path)
+
+    // La photo est servie publiquement
+    const photoUrl = `${BASE_URL}/uploads/authors/${created.body.data.photo_path}`
+    const photo = await fetch(photoUrl)
+    assert.equal(photo.status, 200)
+    assert.equal(photo.headers.get('content-type'), 'image/png')
+
+    // Elle apparaît sur la liste publique (sans aucun livre pour l'instant)
+    const list = await request('/api/authors')
+    const inList = list.body.data.find((author) => author.id === authorId)
+    assert.ok(inList)
+    assert.equal(inList.books_count, 0)
+
+    // Un livre dont l'auteur porte ce nom (majuscules et accents différents) devient une de ses œuvres
+    const bookForm2 = bookForm({ withPdf: false, title: 'Œuvre de test auteur' })
+    bookForm2.set('author', name.toUpperCase().replace('É', 'E'))
+    const book = await fetch(`${BASE_URL}/api/admin/books`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: bookForm2,
+    })
+    bookId = (await book.json()).data.id
+
+    const detail = await request(`/api/authors/${authorId}`)
+    assert.equal(detail.status, 200)
+    assert.deepEqual(detail.body.data.books.map((b) => b.id), [bookId])
+    assert.ok(detail.body.data.books[0].category, 'même format que le catalogue (BookGrid)')
+    assert.equal((await request('/api/authors')).body.data.find((a) => a.id === authorId).books_count, 1)
+
+    // Doublon (majuscules/accents ignorés), dates invalides, photo qui n'en est pas une
+    assert.equal((await sendAuthor(token, 'POST', '/api/admin/authors', authorForm({ name: name.toUpperCase() }))).status, 409)
+    assert.equal((await sendAuthor(token, 'POST', '/api/admin/authors', authorForm({ name: 'Date X', birth_date: '2020-02-31' }))).status, 400)
+    assert.equal((await sendAuthor(token, 'POST', '/api/admin/authors', authorForm({ name: 'Date Y', birth_date: '1950-01-01', death_date: '1940-01-01' }))).status, 400)
+    assert.equal((await sendAuthor(token, 'POST', '/api/admin/authors', authorForm({ name: '   ' }))).status, 400)
+    const fake = authorForm({ name: 'Faux Y' })
+    fake.append('photo', new Blob(['pas une image'], { type: 'image/png' }), 'faux.png')
+    assert.equal((await sendAuthor(token, 'POST', '/api/admin/authors', fake)).status, 400)
+
+    // Modification : texte seul (la photo est conservée), puis nouvelle photo (l'ancienne disparaît)
+    const partial = new FormData() // un seul champ envoyé : les autres gardent leur valeur
+    partial.append('nationality', 'Algérienne')
+    const edited = await sendAuthor(token, 'PUT', `/api/admin/authors/${authorId}`, partial)
+    assert.equal(edited.status, 200)
+    assert.equal(edited.body.data.nationality, 'Algérienne')
+    assert.equal(edited.body.data.name, name, 'le nom absent du formulaire est conservé')
+    assert.equal(edited.body.data.birth_date, '1913-11-07', 'la date absente est conservée')
+    assert.equal(edited.body.data.photo_path, created.body.data.photo_path, 'photo conservée')
+
+    const replaced = await sendAuthor(token, 'PUT', `/api/admin/authors/${authorId}`, authorForm({ name }, { withPhoto: true }))
+    assert.notEqual(replaced.body.data.photo_path, created.body.data.photo_path)
+    assert.equal((await fetch(photoUrl)).status, 404, 'ancienne photo supprimée du disque')
+
+    const removed = await sendAuthor(token, 'PUT', `/api/admin/authors/${authorId}`, authorForm({ name, remove_photo: 'true' }))
+    assert.equal(removed.body.data.photo_path, null)
+
+    // Suppression : la fiche disparaît mais le livre reste dans le catalogue
+    const deleted = await request(`/api/admin/authors/${authorId}`, bearer(token, { method: 'DELETE' }))
+    assert.equal(deleted.status, 200)
+    assert.equal((await request(`/api/authors/${authorId}`)).status, 404)
+    assert.equal((await request(`/api/books/${bookId}`)).status, 200)
+    authorId = null
+  } finally {
+    if (bookId) await request(`/api/admin/books/${bookId}`, bearer(token, { method: 'DELETE' }))
+    if (authorId) await request(`/api/admin/authors/${authorId}`, bearer(token, { method: 'DELETE' }))
+    await pool.query('DELETE FROM authors WHERE name = ANY($1)', [[name, 'Date X', 'Date Y', 'Faux Y']])
+  }
+})

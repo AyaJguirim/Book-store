@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
+import PasswordInput from "../components/auth/PasswordInput";
 import { useAuth } from "../hooks/useAuth";
 import { getErrorMessage } from "../utils/getErrorMessage";
 
@@ -54,17 +55,19 @@ function LoginPage() {
             <label htmlFor="login-password" className="form-label">
               Mot de passe
             </label>
-            <input
+            <PasswordInput
               id="login-password"
-              type="password"
-              className="form-control"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
               required
             />
           </div>
-
+          <div className="text-end mt-1">
+            <Link to="/mot-de-passe-oublie" className="small">
+              Mot de passe oublié ?
+            </Link>
+          </div>
           {error && (
             <div className="alert alert-danger" role="alert">
               {error}

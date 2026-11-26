@@ -4,7 +4,7 @@ import multer from 'multer'
 import { PDFS_DIR, COVERS_DIR, MAX_PDF_SIZE, MAX_COVER_SIZE, deleteStoredFile } from '../config/uploads.js'
 import { HttpError } from '../utils/HttpError.js'
 
-const COVER_TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }
+export const COVER_TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }
 
 // Nom de fichier aléatoire : jamais le nom d'origine (évite collisions et noms piégés)
 const storage = multer.diskStorage({
@@ -38,7 +38,7 @@ const upload = multer({
 ])
 
 // Lit les premiers octets d'un fichier (vérifie le vrai contenu, pas seulement le type annoncé)
-async function readHead(filePath, length) {
+export async function readHead(filePath, length) {
   const handle = await fs.promises.open(filePath, 'r')
   try {
     const buffer = Buffer.alloc(length)
@@ -49,7 +49,7 @@ async function readHead(filePath, length) {
   }
 }
 
-function looksLikeImage(head) {
+export function looksLikeImage(head) {
   const isJpeg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff
   const isPng = head.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
   const isWebp = head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP'

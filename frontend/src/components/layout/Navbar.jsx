@@ -43,6 +43,11 @@ function Navbar() {
               </NavLink>
             </li>
             <li className="nav-item">
+              <NavLink to="/auteurs" className={getLinkClass}>
+                Auteurs
+              </NavLink>
+            </li>
+            <li className="nav-item">
               <NavLink to="/favoris" className={getLinkClass}>
                 Mes favoris{" "}
                 <span className="badge text-bg-secondary">{count}</span>

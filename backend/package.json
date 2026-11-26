@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "migrate:covers": "node scripts/migrate-legacy-covers.js"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +20,7 @@
     "express": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.5.0",
+    "nodemailer": "^10.6.1",
     "pg": "^8.23.1"
   }
 }

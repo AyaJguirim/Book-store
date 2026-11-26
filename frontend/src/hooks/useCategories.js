@@ -24,5 +24,8 @@ export function useCategories() {
     return () => controller.abort()
   }, [])
 
-  return { categories, loading, error }
+    // Ajoute une catégorie qui vient d'être créée, sans recharger la liste depuis le serveur
+  const addCategory = (category) => setCategories((current) => [...current, category])
+
+  return { categories, loading, error, addCategory }
 }

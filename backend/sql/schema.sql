@@ -13,6 +13,7 @@ DROP TABLE IF EXISTS reading_goals;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS books;
 DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS authors;
 
 CREATE TABLE categories (
   id   SERIAL PRIMARY KEY,
@@ -35,3 +36,21 @@ CREATE TABLE books (
 );
 
 CREATE INDEX idx_books_category_id ON books(category_id);
+
+-- Auteurs (fiche publique gérée par l'administrateur). Leurs livres sont retrouvés
+-- par le nom : books.author = authors.name (majuscules et accents ignorés).
+CREATE TABLE authors (
+  id          SERIAL PRIMARY KEY,
+  name        VARCHAR(150) NOT NULL,
+  biography   TEXT,
+  birth_date  DATE,
+  death_date  DATE,
+  birth_place VARCHAR(150),
+  nationality VARCHAR(100),
+  photo_path  VARCHAR(255),
+  created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+  CONSTRAINT authors_dates_check
+    CHECK (death_date IS NULL OR birth_date IS NULL OR death_date >= birth_date)
+);
+
+CREATE UNIQUE INDEX idx_authors_name_lower ON authors (lower(name));

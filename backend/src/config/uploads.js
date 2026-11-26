@@ -7,6 +7,7 @@ const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 export const UPLOADS_DIR = path.join(backendDir, 'uploads')
 export const PDFS_DIR = path.join(UPLOADS_DIR, 'pdfs') // privé : servi uniquement via l'API, après connexion
 export const COVERS_DIR = path.join(UPLOADS_DIR, 'covers') // public : de simples images
+export const AUTHORS_DIR = path.join(UPLOADS_DIR, 'authors') // public : photos des auteurs
 
 export const MAX_PDF_SIZE = 100 * 1024 * 1024 // 100 Mo
 export const MAX_COVER_SIZE = 5 * 1024 * 1024 // 5 Mo
@@ -14,6 +15,7 @@ export const MAX_COVER_SIZE = 5 * 1024 * 1024 // 5 Mo
 // Création au démarrage si les dossiers n'existent pas encore
 fs.mkdirSync(PDFS_DIR, { recursive: true })
 fs.mkdirSync(COVERS_DIR, { recursive: true })
+fs.mkdirSync(AUTHORS_DIR, { recursive: true })
 
 // Supprime un fichier uploadé sans jamais faire planter la requête
 // (path.basename : on ne sort jamais du dossier prévu)

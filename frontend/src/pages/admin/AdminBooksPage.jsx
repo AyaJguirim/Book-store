@@ -2,6 +2,7 @@
 // Espace administrateur : liste des livres avec Ajouter / Modifier / Supprimer.
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import AdminNav from "../../components/admin/AdminNav";
 import Loader from "../../components/common/Loader";
 import ErrorMessage from "../../components/common/ErrorMessage";
 import { useBooks } from "../../hooks/useBooks";
@@ -111,6 +112,7 @@ function AdminBooksPage() {
 
   return (
     <div>
+      <AdminNav />
       <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
         <h1 className="h3 mb-0">
           Gestion des livres

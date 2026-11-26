@@ -3,11 +3,20 @@ import jwt from 'jsonwebtoken'
 import { JWT_SECRET, JWT_EXPIRES_IN } from '../config/auth.js'
 import { HttpError } from '../utils/HttpError.js'
 import { createUser, findUserByEmail, findUserById } from '../services/userService.js'
-
+import { FRONTEND_URL } from '../config/mail.js'
+import { sendPasswordResetEmail } from '../services/mailService.js'
+import {
+  RESET_TOKEN_MINUTES,
+  hasRecentRequest,
+  createResetToken,
+  consumeResetToken,
+} from '../services/passwordResetService.js'
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const BCRYPT_COST = 10
 const BAD_CREDENTIALS = 'E-mail ou mot de passe incorrect.'
-
+const RESET_REQUESTED =
+  'Si cette adresse correspond à un compte, un e-mail de réinitialisation vient d\'être envoyé.'
+const RESET_INVALID = 'Ce lien est invalide ou a expiré. Refaites une demande de réinitialisation.'
 // Empreinte factice : permet de faire le même calcul quand l'e-mail est inconnu
 const DUMMY_HASH = bcrypt.hashSync('mot-de-passe-factice', BCRYPT_COST)
 
@@ -22,7 +31,13 @@ function signToken(user) {
 function publicUser(user) {
   return { id: user.id, name: user.name, email: user.email, role: user.role }
 }
-
+// Règle commune à l'inscription et à la réinitialisation du mot de passe
+function validatePassword(password) {
+  // bcrypt ignore tout ce qui dépasse 72 octets : on refuse plutôt que tronquer en silence
+  if (password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
+    throw new HttpError(400, 'Le mot de passe doit contenir au moins 8 caractères (72 octets maximum).')
+  }
+}
 function validateRegistration(body) {
   const { name, email, password } = body ?? {}
 
@@ -40,10 +55,7 @@ function validateRegistration(body) {
     throw new HttpError(400, 'Adresse e-mail invalide.')
   }
 
-  // bcrypt ignore tout ce qui dépasse 72 octets : on refuse plutôt que tronquer en silence
-  if (password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
-    throw new HttpError(400, 'Le mot de passe doit contenir au moins 8 caractères (72 octets maximum).')
-  }
+    validatePassword(password)
 
   return { name: cleanName, email: cleanEmail, password }
 }
@@ -96,4 +108,55 @@ export async function getMe(req, res) {
   }
 
   res.json({ data: { user: publicUser(user) } })
+}
+
+// Étape 1 : l'utilisateur donne son e-mail, on lui envoie un lien (s'il a un compte)
+export async function forgotPassword(req, res) {
+  const { email } = req.body ?? {}
+
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
+  if (cleanEmail.length > 254 || !EMAIL_REGEX.test(cleanEmail)) {
+    throw new HttpError(400, 'Adresse e-mail invalide.')
+  }
+
+  const user = await findUserByEmail(cleanEmail)
+
+  // Pas de compte, ou une demande vient d'être faite : on ne fait rien... et on répond pareil,
+  // pour qu'on ne puisse pas deviner quelles adresses ont un compte.
+  if (user && !(await hasRecentRequest(user.id))) {
+    const token = await createResetToken(user.id)
+    const resetUrl = `${FRONTEND_URL}/reinitialiser-mot-de-passe?token=${token}`
+
+    // Sans "await" : la réponse part tout de suite (même durée qu'avec une adresse inconnue)
+    sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      resetUrl,
+      validMinutes: RESET_TOKEN_MINUTES,
+    }).catch((error) => console.error('Mot de passe oublié : envoi impossible :', error.message))
+  }
+
+  res.json({ data: { message: RESET_REQUESTED } })
+}
+
+// Étape 2 : l'utilisateur arrive depuis le lien et choisit son nouveau mot de passe
+export async function resetPassword(req, res) {
+  const { token, password } = req.body ?? {}
+
+  // Un jeton valide = exactement 64 caractères hexadécimaux
+  if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) {
+    throw new HttpError(400, RESET_INVALID)
+  }
+  if (typeof password !== 'string') {
+    throw new HttpError(400, 'Le mot de passe est obligatoire.')
+  }
+  validatePassword(password)
+
+  const passwordHash = await bcrypt.hash(password, BCRYPT_COST)
+
+  if (!(await consumeResetToken(token, passwordHash))) {
+    throw new HttpError(400, RESET_INVALID)
+  }
+
+  res.json({ data: { message: 'Votre mot de passe a été modifié. Vous pouvez vous connecter.' } })
 }
