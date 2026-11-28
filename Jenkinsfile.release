@@ -1,0 +1,206 @@
+// Pipeline 3 : Build versionne sur tag vX.Y.Z
+// 7 stages : Checkout, Setup, Build, Run (Docker), Smoke Test, Archive Artifacts, Cleanup
+// Le nom du tag doit respecter le format vX.Y.Z (sinon le build echoue des le Setup).
+// Les images Docker sont taguees avec la version (ex. bookstore-api:v1.0.0),
+// puis exportees en .tar.gz et archivees avec VERSION.txt et le rapport.
+// Jenkins tourne sous Windows : bat pour les commandes, Git Bash pour les scripts.
+
+import groovy.transform.Field
+
+// Statut de chaque etape : PASSED / FAILED (une etape non executee reste SKIPPED)
+@Field Map results = [:]
+@Field List stageNames = [
+    'Checkout', 'Setup', 'Build', 'Run', 'Smoke Test', 'Archive Artifacts', 'Cleanup'
+]
+
+def track(String name, Closure body) {
+    try {
+        body()
+        results[name] = 'PASSED'
+    } catch (err) {
+        results[name] = 'FAILED'
+        throw err
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        timeout(time: 45, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    environment {
+        // Git Bash en tete du PATH (et non le bash de WSL)
+        PATH = "C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\usr\\bin;${env.PATH}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                script {
+                    track('Checkout') {
+                        echo '>>> [1/7] Checkout : recuperation du code du tag'
+                        checkout scm
+                        bat 'git log -1 --oneline'
+                    }
+                }
+            }
+        }
+
+        stage('Setup') {
+            steps {
+                script {
+                    track('Setup') {
+                        echo '>>> [2/7] Setup : verification du tag et des outils'
+                        // Dans un job Multibranch, un build de tag expose TAG_NAME (et BRANCH_NAME = nom du tag)
+                        def tagName = env.TAG_NAME ?: env.BRANCH_NAME
+                        if (!tagName || !(tagName ==~ /^v\d+\.\d+\.\d+$/)) {
+                            error "Tag invalide : '${tagName}'. Format attendu : vX.Y.Z (ex. v1.0.0)"
+                        }
+                        env.VERSION = tagName
+                        env.IMG_TAG = tagName
+                        echo "Version : ${env.VERSION} (images taguees ${env.IMG_TAG})"
+                        bat 'docker --version'
+                        bat 'bash --version'
+                        bat 'if exist artifacts rmdir /s /q artifacts'
+                        bat 'mkdir artifacts'
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+                    track('Build') {
+                        echo '>>> [3/7] Build : images API et web (Node 20) taguees avec la version'
+                        bat "bash ci/build.sh 20 ${env.IMG_TAG}"
+                        // build.sh produit bookstore-api:vX.Y.Z-node20 ; on ajoute le tag de version propre
+                        bat "docker tag bookstore-api:${env.IMG_TAG}-node20 bookstore-api:${env.VERSION}"
+                        bat "docker tag bookstore-web:${env.IMG_TAG}-node20 bookstore-web:${env.VERSION}"
+                    }
+                }
+            }
+        }
+
+        stage('Run (Docker)') {
+            steps {
+                script {
+                    track('Run') {
+                        echo '>>> [4/7] Run (Docker) : lancement des conteneurs'
+                        bat "bash ci/run.sh 20 ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                script {
+                    track('Smoke Test') {
+                        echo '>>> [5/7] Smoke Test : 4 verifications'
+                        bat "bash ci/smoke_test.sh 20 ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Archive Artifacts') {
+            steps {
+                script {
+                    track('Archive Artifacts') {
+                        echo '>>> [6/7] Archive Artifacts : export des images, VERSION.txt, logs et smoke'
+
+                        // 1. Retrouver les images construites pour cette version
+                        def out = bat(
+                            script: '@docker images --format "{{.Repository}}:{{.Tag}}"',
+                            returnStdout: true
+                        ).trim()
+                        def refs = out.readLines()
+                            .collect { it.trim() }
+                            .findAll { it == "bookstore-api:${env.VERSION}" || it == "bookstore-web:${env.VERSION}" }
+                        echo "Images trouvees pour ${env.VERSION} : ${refs}"
+                        if (refs.isEmpty()) {
+                            error "Aucune image bookstore* taguee ${env.VERSION} trouvee (docker images)"
+                        }
+
+                        // 2. Export en .tar puis compression .tar.gz
+                        for (ref in refs) {
+                            def fileName = ref.replace(':', '-').replace('/', '-')
+                            bat "docker save -o artifacts/${fileName}.tar ${ref}"
+                            bat "gzip -f artifacts/${fileName}.tar"
+                        }
+
+                        // 3. VERSION.txt
+                        def commit = bat(script: '@git rev-parse --short HEAD', returnStdout: true).trim()
+                        def now = bat(script: '@echo %DATE% %TIME%', returnStdout: true).trim()
+                        def v = []
+                        v << "Version : ${env.VERSION}"
+                        v << "Build   : #${env.BUILD_NUMBER}"
+                        v << "Commit  : ${commit}"
+                        v << "Date    : ${now}"
+                        v << 'Images  :'
+                        for (ref in refs) { v << "  - ${ref}" }
+                        writeFile file: 'artifacts/VERSION.txt', text: v.join('\n') + '\n'
+
+                        archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                script {
+                    track('Cleanup') {
+                        echo '>>> [7/7] Cleanup : suppression des conteneurs et des reseaux'
+                        bat "bash ci/cleanup.sh 20 ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                // 1. nettoyage de securite, meme si le pipeline a echoue avant le stage Cleanup
+                if (env.IMG_TAG) {
+                    try {
+                        bat(script: "bash ci/cleanup.sh 20 ${env.IMG_TAG}", returnStatus: true)
+                    } catch (e) {
+                        echo "Nettoyage de securite impossible : ${e}"
+                    }
+                }
+
+                // 2. rapport de pipeline : statut de chaque etape
+                def overall = 'PASSED'
+                for (n in stageNames) {
+                    if (results[n] != 'PASSED') { overall = 'FAILED' }
+                }
+                def lines = []
+                lines << '=== Rapport de pipeline : build versionne (tag vX.Y.Z) ==='
+                lines << "Job      : ${env.JOB_NAME}"
+                lines << "Build    : #${env.BUILD_NUMBER}"
+                lines << "Tag      : ${env.TAG_NAME ?: env.BRANCH_NAME ?: 'n/a'}"
+                lines << "Version  : ${env.VERSION ?: 'n/a'}"
+                lines << '------------------------------------------'
+                for (n in stageNames) {
+                    lines << "${n} ${results[n] ?: 'SKIPPED'}"
+                }
+                lines << '------------------------------------------'
+                lines << "STATUT GLOBAL : ${overall}"
+                writeFile file: 'artifacts/pipeline_report.txt', text: lines.join('\n') + '\n'
+
+                // 3. archivage (y compris en cas d'echec)
+                archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true
+            }
+        }
+        success { echo 'Pipeline release : PASSED' }
+        failure { echo 'Pipeline release : FAILED' }
+    }
+}
