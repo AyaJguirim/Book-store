@@ -3,7 +3,7 @@ NODE="${1:-20}"
 TAG="${2:-local}"
 ID="${TAG}-node${NODE}"
 NET="bookstore-net-${ID}"
-HEALTH_PATH="/api/health"
+HEALTH_PATH="/api/healthz"
 mkdir -p artifacts
 RESULT="artifacts/smoke_result_node${NODE}.txt"
 FAILS=0
