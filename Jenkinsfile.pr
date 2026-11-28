@@ -1,0 +1,164 @@
+// Pipeline 1 : Build & Smoke sur Pull Request vers dev
+// 7 stages : Checkout, Setup, Build, Run (Docker), Smoke Test, Archive Artifacts, Cleanup
+// Jenkins tourne sous Windows : les commandes passent par bat, les scripts par Git Bash.
+
+import groovy.transform.Field
+
+// Statut de chaque stage : PASSED / FAILED (un stage non execute reste SKIPPED)
+@Field Map results = [:]
+@Field List stageNames = ['Checkout', 'Setup', 'Build', 'Run (Docker)', 'Smoke Test', 'Archive Artifacts', 'Cleanup']
+
+// Execute le contenu d'un stage et memorise son statut
+def track(String name, Closure body) {
+    try {
+        body()
+        results[name] = 'PASSED'
+    } catch (err) {
+        results[name] = 'FAILED'
+        throw err
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)          // le checkout est fait explicitement (stage Checkout)
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    environment {
+        NODE_VERSION = '20'
+        // Git Bash en tete du PATH (et non le bash de WSL)
+        PATH = "C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\usr\\bin;${env.PATH}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                script {
+                    track('Checkout') {
+                        echo '>>> [1/7] Checkout : recuperation du code de la Pull Request'
+                        checkout scm
+                        bat 'git log -1 --oneline'
+                    }
+                }
+            }
+        }
+
+        stage('Setup') {
+            steps {
+                script {
+                    track('Setup') {
+                        echo '>>> [2/7] Setup : verification des outils et preparation du dossier artifacts'
+                        // tag unique pour les images et conteneurs de ce build
+                        env.IMG_TAG = "pr${env.CHANGE_ID ?: 'x'}-b${env.BUILD_NUMBER}"
+                        echo "Tag des images : ${env.IMG_TAG} (Node ${env.NODE_VERSION})"
+                        bat 'docker --version'
+                        bat 'bash --version'
+                        bat 'if exist artifacts rmdir /s /q artifacts'
+                        bat 'mkdir artifacts'
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+                    track('Build') {
+                        echo '>>> [3/7] Build : construction des images API et web'
+                        bat "bash ci/build.sh ${env.NODE_VERSION} ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Run (Docker)') {
+            steps {
+                script {
+                    track('Run (Docker)') {
+                        echo '>>> [4/7] Run (Docker) : lancement de l API et du front sur un reseau Docker'
+                        bat "bash ci/run.sh ${env.NODE_VERSION} ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                script {
+                    track('Smoke Test') {
+                        echo '>>> [5/7] Smoke Test : 4 verifications (code de sortie 0 = PASSED, 1 = FAILED)'
+                        bat "bash ci/smoke_test.sh ${env.NODE_VERSION} ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Archive Artifacts') {
+            steps {
+                script {
+                    track('Archive Artifacts') {
+                        echo '>>> [6/7] Archive Artifacts : logs de build et resultat du smoke test'
+                        archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                script {
+                    track('Cleanup') {
+                        echo '>>> [7/7] Cleanup : suppression des conteneurs et du reseau'
+                        bat "bash ci/cleanup.sh ${env.NODE_VERSION} ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                // 1. nettoyage de securite, meme si le pipeline a echoue avant le stage Cleanup
+                if (env.IMG_TAG) {
+                    try {
+                        bat(script: "bash ci/cleanup.sh ${env.NODE_VERSION} ${env.IMG_TAG}", returnStatus: true)
+                    } catch (e) {
+                        echo "Nettoyage de securite impossible : ${e}"
+                    }
+                }
+
+                // 2. rapport de pipeline : statut de chaque stage
+                def overall = 'PASSED'
+                for (n in stageNames) {
+                    if (results[n] != 'PASSED') { overall = 'FAILED' }
+                }
+                def lines = []
+                lines << '=== Rapport de pipeline : Pull Request ==='
+                lines << "Job      : ${env.JOB_NAME}"
+                lines << "Build    : #${env.BUILD_NUMBER}"
+                lines << "Branche  : ${env.BRANCH_NAME ?: 'n/a'}"
+                lines << "PR       : ${env.CHANGE_ID ?: 'n/a'} vers ${env.CHANGE_TARGET ?: 'n/a'}"
+                lines << "Node     : ${env.NODE_VERSION}"
+                lines << "Tag      : ${env.IMG_TAG ?: 'n/a'}"
+                lines << '------------------------------------------'
+                for (n in stageNames) {
+                    lines << "${n} ${results[n] ?: 'SKIPPED'}"
+                }
+                lines << '------------------------------------------'
+                lines << "STATUT GLOBAL : ${overall}"
+                writeFile file: 'artifacts/pipeline_report.txt', text: lines.join('\n') + '\n'
+
+                // 3. archivage (y compris en cas d'echec)
+                archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true
+            }
+        }
+        success { echo 'Pipeline PR : PASSED' }
+        failure { echo 'Pipeline PR : FAILED' }
+    }
+}
