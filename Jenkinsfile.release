@@ -3,7 +3,7 @@
 // Le nom du tag doit respecter le format vX.Y.Z (sinon le build echoue des le Setup).
 // Les images Docker sont taguees avec la version (ex. bookstore-api:v1.0.0),
 // puis exportees en .tar.gz et archivees avec VERSION.txt et le rapport.
-// Jenkins tourne sous Windows : bat pour les commandes, Git Bash pour les scripts.
+// Compatible Jenkins sous Linux (conteneur) et sous Windows : sh ou bat selon le noeud.
 
 import groovy.transform.Field
 
@@ -12,6 +12,8 @@ import groovy.transform.Field
 @Field List stageNames = [
     'Checkout', 'Setup', 'Build', 'Run', 'Smoke Test', 'Archive Artifacts', 'Cleanup'
 ]
+// Windows : Git Bash en tete du PATH (et non le bash de WSL)
+@Field String GIT_BASH_PATH = 'PATH+GITBASH=C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\usr\\bin'
 
 def track(String name, Closure body) {
     try {
@@ -20,6 +22,35 @@ def track(String name, Closure body) {
     } catch (err) {
         results[name] = 'FAILED'
         throw err
+    }
+}
+
+// Execute une commande : sh sous Linux, bat sous Windows
+def run(String cmd) {
+    if (isUnix()) {
+        sh cmd
+    } else {
+        withEnv([GIT_BASH_PATH]) { bat cmd }
+    }
+}
+
+// Execute une commande et renvoie sa sortie (texte)
+def capture(String cmd) {
+    def res = ''
+    if (isUnix()) {
+        res = sh(script: cmd, returnStdout: true)
+    } else {
+        withEnv([GIT_BASH_PATH]) { res = bat(script: '@' + cmd, returnStdout: true) }
+    }
+    return res.trim()
+}
+
+// Execute une commande sans faire echouer le pipeline (nettoyage de securite)
+def runQuiet(String cmd) {
+    if (isUnix()) {
+        sh(script: cmd, returnStatus: true)
+    } else {
+        withEnv([GIT_BASH_PATH]) { bat(script: cmd, returnStatus: true) }
     }
 }
 
@@ -32,11 +63,6 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
-    environment {
-        // Git Bash en tete du PATH (et non le bash de WSL)
-        PATH = "C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\usr\\bin;${env.PATH}"
-    }
-
     stages {
 
         stage('Checkout') {
@@ -45,7 +71,7 @@ pipeline {
                     track('Checkout') {
                         echo '>>> [1/7] Checkout : recuperation du code du tag'
                         checkout scm
-                        bat 'git log -1 --oneline'
+                        run 'git log -1 --oneline'
                     }
                 }
             }
@@ -64,10 +90,14 @@ pipeline {
                         env.VERSION = tagName
                         env.IMG_TAG = tagName
                         echo "Version : ${env.VERSION} (images taguees ${env.IMG_TAG})"
-                        bat 'docker --version'
-                        bat 'bash --version'
-                        bat 'if exist artifacts rmdir /s /q artifacts'
-                        bat 'mkdir artifacts'
+                        run 'docker --version'
+                        run 'bash --version'
+                        if (isUnix()) {
+                            run 'rm -rf artifacts && mkdir artifacts'
+                        } else {
+                            run 'if exist artifacts rmdir /s /q artifacts'
+                            run 'mkdir artifacts'
+                        }
                     }
                 }
             }
@@ -78,10 +108,10 @@ pipeline {
                 script {
                     track('Build') {
                         echo '>>> [3/7] Build : images API et web (Node 20) taguees avec la version'
-                        bat "bash ci/build.sh 20 ${env.IMG_TAG}"
+                        run "bash ci/build.sh 20 ${env.IMG_TAG}"
                         // build.sh produit bookstore-api:vX.Y.Z-node20 ; on ajoute le tag de version propre
-                        bat "docker tag bookstore-api:${env.IMG_TAG}-node20 bookstore-api:${env.VERSION}"
-                        bat "docker tag bookstore-web:${env.IMG_TAG}-node20 bookstore-web:${env.VERSION}"
+                        run "docker tag bookstore-api:${env.IMG_TAG}-node20 bookstore-api:${env.VERSION}"
+                        run "docker tag bookstore-web:${env.IMG_TAG}-node20 bookstore-web:${env.VERSION}"
                     }
                 }
             }
@@ -92,7 +122,7 @@ pipeline {
                 script {
                     track('Run') {
                         echo '>>> [4/7] Run (Docker) : lancement des conteneurs'
-                        bat "bash ci/run.sh 20 ${env.IMG_TAG}"
+                        run "bash ci/run.sh 20 ${env.IMG_TAG}"
                     }
                 }
             }
@@ -103,7 +133,7 @@ pipeline {
                 script {
                     track('Smoke Test') {
                         echo '>>> [5/7] Smoke Test : 4 verifications'
-                        bat "bash ci/smoke_test.sh 20 ${env.IMG_TAG}"
+                        run "bash ci/smoke_test.sh 20 ${env.IMG_TAG}"
                     }
                 }
             }
@@ -116,28 +146,25 @@ pipeline {
                         echo '>>> [6/7] Archive Artifacts : export des images, VERSION.txt, logs et smoke'
 
                         // 1. Retrouver les images construites pour cette version
-                        def out = bat(
-                            script: '@docker images --format "{{.Repository}}:{{.Tag}}"',
-                            returnStdout: true
-                        ).trim()
+                        def out = capture('docker images --format "{{.Repository}}:{{.Tag}}"')
                         def refs = out.readLines()
                             .collect { it.trim() }
                             .findAll { it == "bookstore-api:${env.VERSION}" || it == "bookstore-web:${env.VERSION}" }
                         echo "Images trouvees pour ${env.VERSION} : ${refs}"
                         if (refs.isEmpty()) {
-                            error "Aucune image bookstore* taguee ${env.VERSION} trouvee (docker images)"
+                            error "Aucune image bookstore-api/web taguee ${env.VERSION} trouvee (docker images)"
                         }
 
                         // 2. Export en .tar puis compression .tar.gz
                         for (ref in refs) {
                             def fileName = ref.replace(':', '-').replace('/', '-')
-                            bat "docker save -o artifacts/${fileName}.tar ${ref}"
-                            bat "gzip -f artifacts/${fileName}.tar"
+                            run "docker save -o artifacts/${fileName}.tar ${ref}"
+                            run "gzip -f artifacts/${fileName}.tar"
                         }
 
                         // 3. VERSION.txt
-                        def commit = bat(script: '@git rev-parse --short HEAD', returnStdout: true).trim()
-                        def now = bat(script: '@echo %DATE% %TIME%', returnStdout: true).trim()
+                        def commit = capture('git rev-parse --short HEAD')
+                        def now = capture(isUnix() ? 'date' : 'echo %DATE% %TIME%')
                         def v = []
                         v << "Version : ${env.VERSION}"
                         v << "Build   : #${env.BUILD_NUMBER}"
@@ -158,7 +185,7 @@ pipeline {
                 script {
                     track('Cleanup') {
                         echo '>>> [7/7] Cleanup : suppression des conteneurs et des reseaux'
-                        bat "bash ci/cleanup.sh 20 ${env.IMG_TAG}"
+                        run "bash ci/cleanup.sh 20 ${env.IMG_TAG}"
                     }
                 }
             }
@@ -171,7 +198,7 @@ pipeline {
                 // 1. nettoyage de securite, meme si le pipeline a echoue avant le stage Cleanup
                 if (env.IMG_TAG) {
                     try {
-                        bat(script: "bash ci/cleanup.sh 20 ${env.IMG_TAG}", returnStatus: true)
+                        runQuiet "bash ci/cleanup.sh 20 ${env.IMG_TAG}"
                     } catch (e) {
                         echo "Nettoyage de securite impossible : ${e}"
                     }
