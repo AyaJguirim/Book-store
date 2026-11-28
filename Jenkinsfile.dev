@@ -1,0 +1,214 @@
+// Pipeline 2 : Build complet sur push de la branche dev
+// 7 stages : Checkout, Setup, Build (parallele), Run (Docker) (parallele), Smoke Test (parallele),
+//            Archive Artifacts, Cleanup
+// Les versions Node 20 et Node 22 sont traitees en parallele pour reduire la duree totale.
+// Jenkins tourne sous Windows : bat pour les commandes, Git Bash pour les scripts.
+
+import groovy.transform.Field
+
+// Statut de chaque etape : PASSED / FAILED (une etape non executee reste SKIPPED)
+@Field Map results = [:]
+@Field List stageNames = [
+    'Checkout', 'Setup',
+    'Build Node 20', 'Build Node 22',
+    'Run Node 20', 'Run Node 22',
+    'Smoke Test Node 20', 'Smoke Test Node 22',
+    'Archive Artifacts', 'Cleanup'
+]
+
+def track(String name, Closure body) {
+    try {
+        body()
+        results[name] = 'PASSED'
+    } catch (err) {
+        results[name] = 'FAILED'
+        throw err
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        timeout(time: 45, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    environment {
+        // Git Bash en tete du PATH (et non le bash de WSL)
+        PATH = "C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\usr\\bin;${env.PATH}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                script {
+                    track('Checkout') {
+                        echo '>>> [1/7] Checkout : recuperation du code de la branche dev'
+                        checkout scm
+                        bat 'git log -1 --oneline'
+                    }
+                }
+            }
+        }
+
+        stage('Setup') {
+            steps {
+                script {
+                    track('Setup') {
+                        echo '>>> [2/7] Setup : verification des outils et preparation du dossier artifacts'
+                        env.IMG_TAG = "dev-b${env.BUILD_NUMBER}"
+                        echo "Tag des images : ${env.IMG_TAG} (Node 20 et Node 22)"
+                        bat 'docker --version'
+                        bat 'bash --version'
+                        bat 'if exist artifacts rmdir /s /q artifacts'
+                        bat 'mkdir artifacts'
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            failFast false
+            parallel {
+                stage('Build Node 20') {
+                    steps {
+                        script {
+                            track('Build Node 20') {
+                                echo '>>> [3/7] Build : images API et web avec Node 20'
+                                bat "bash ci/build.sh 20 ${env.IMG_TAG}"
+                            }
+                        }
+                    }
+                }
+                stage('Build Node 22') {
+                    steps {
+                        script {
+                            track('Build Node 22') {
+                                echo '>>> [3/7] Build : images API et web avec Node 22'
+                                bat "bash ci/build.sh 22 ${env.IMG_TAG}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Run (Docker)') {
+            failFast false
+            parallel {
+                stage('Run Node 20') {
+                    steps {
+                        script {
+                            track('Run Node 20') {
+                                echo '>>> [4/7] Run (Docker) : lancement Node 20'
+                                bat "bash ci/run.sh 20 ${env.IMG_TAG}"
+                            }
+                        }
+                    }
+                }
+                stage('Run Node 22') {
+                    steps {
+                        script {
+                            track('Run Node 22') {
+                                echo '>>> [4/7] Run (Docker) : lancement Node 22'
+                                bat "bash ci/run.sh 22 ${env.IMG_TAG}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Test') {
+            failFast false
+            parallel {
+                stage('Smoke Test Node 20') {
+                    steps {
+                        script {
+                            track('Smoke Test Node 20') {
+                                echo '>>> [5/7] Smoke Test : 4 verifications sur Node 20'
+                                bat "bash ci/smoke_test.sh 20 ${env.IMG_TAG}"
+                            }
+                        }
+                    }
+                }
+                stage('Smoke Test Node 22') {
+                    steps {
+                        script {
+                            track('Smoke Test Node 22') {
+                                echo '>>> [5/7] Smoke Test : 4 verifications sur Node 22'
+                                bat "bash ci/smoke_test.sh 22 ${env.IMG_TAG}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Archive Artifacts') {
+            steps {
+                script {
+                    track('Archive Artifacts') {
+                        echo '>>> [6/7] Archive Artifacts : logs de build et resultats des smoke tests'
+                        archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                script {
+                    track('Cleanup') {
+                        echo '>>> [7/7] Cleanup : suppression des conteneurs et des reseaux'
+                        bat "bash ci/cleanup.sh 20 ${env.IMG_TAG}"
+                        bat "bash ci/cleanup.sh 22 ${env.IMG_TAG}"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                // 1. nettoyage de securite, meme si le pipeline a echoue avant le stage Cleanup
+                if (env.IMG_TAG) {
+                    try {
+                        bat(script: "bash ci/cleanup.sh 20 ${env.IMG_TAG}", returnStatus: true)
+                        bat(script: "bash ci/cleanup.sh 22 ${env.IMG_TAG}", returnStatus: true)
+                    } catch (e) {
+                        echo "Nettoyage de securite impossible : ${e}"
+                    }
+                }
+
+                // 2. rapport de pipeline : statut de chaque etape
+                def overall = 'PASSED'
+                for (n in stageNames) {
+                    if (results[n] != 'PASSED') { overall = 'FAILED' }
+                }
+                def lines = []
+                lines << '=== Rapport de pipeline : push sur dev (build parallele) ==='
+                lines << "Job      : ${env.JOB_NAME}"
+                lines << "Build    : #${env.BUILD_NUMBER}"
+                lines << "Branche  : ${env.BRANCH_NAME ?: 'n/a'}"
+                lines << "Tag      : ${env.IMG_TAG ?: 'n/a'}"
+                lines << '------------------------------------------'
+                for (n in stageNames) {
+                    lines << "${n} ${results[n] ?: 'SKIPPED'}"
+                }
+                lines << '------------------------------------------'
+                lines << "STATUT GLOBAL : ${overall}"
+                writeFile file: 'artifacts/pipeline_report.txt', text: lines.join('\n') + '\n'
+
+                // 3. archivage (y compris en cas d'echec)
+                archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: true
+            }
+        }
+        success { echo 'Pipeline dev : PASSED' }
+        failure { echo 'Pipeline dev : FAILED' }
+    }
+}
